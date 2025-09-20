@@ -98,20 +98,19 @@ export default function Inventory() {
   // --- Utility: sort alphabetically ---
   const sortProducts = (list: Product[]) => [...list].sort((a, b) => a.name.localeCompare(b.name))
 
-  // --- Fetch products ---
-  const fetchProducts = async () => {
-    const { data, error } = await supabase.from("products").select("*")
-    if (error) {
-      console.error("Fetch error:", error)
-      setSnackbar({ open: true, msg: "❌ Failed to load products", type: "error" })
-      return
-    }
-    if (data) setProducts(sortProducts(data))
-  }
-
   useEffect(() => {
+    const fetchProducts = async () => {
+      const { data, error } = await supabase.from("products").select("*")
+      if (error) {
+        console.error("Fetch error:", error)
+        return
+      }
+      setProducts(sortProducts(data || [])) // always sorted
+    }
+
     fetchProducts()
-  }, [])
+  }, []) // no missing deps warning
+
 
   // --- Add product ---
   const handleAdd = async () => {
