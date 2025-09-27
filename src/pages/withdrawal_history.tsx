@@ -11,8 +11,11 @@ import {
   Paper,
   TextField,
   MenuItem,
+  Button,
 } from "@mui/material"
 import { supabase } from "../assets/lib/supabaseClient"
+import * as XLSX from "xlsx"
+import { saveAs } from "file-saver"
 
 interface Staff {
   id: number
@@ -29,7 +32,7 @@ interface WithdrawalHistory {
 
 export default function WithdrawalHistoryPage() {
   const [staff, setStaff] = useState<Staff[]>([])
-  const [selectedStaff, setSelectedStaff] = useState<number | "">( "")
+  const [selectedStaff, setSelectedStaff] = useState<number | "">("")
   const [history, setHistory] = useState<WithdrawalHistory[]>([])
 
   useEffect(() => {
@@ -48,10 +51,8 @@ export default function WithdrawalHistoryPage() {
         if (data) {
           if (selectedStaff) {
             // Find staff name by selectedStaff id
-            const staffObj = staff.find(s => s.id === selectedStaff)
-            setHistory(
-              data.filter(row => row.staff_name === staffObj?.name)
-            )
+            const staffObj = staff.find((s) => s.id === selectedStaff)
+            setHistory(data.filter((row) => row.staff_name === staffObj?.name))
           } else {
             setHistory(data)
           }
@@ -59,25 +60,67 @@ export default function WithdrawalHistoryPage() {
       })
   }, [selectedStaff, staff])
 
+  // ✅ Download Excel function
+  const downloadExcel = () => {
+    if (history.length === 0) {
+      alert("No data to export")
+      return
+    }
+
+    const worksheet = XLSX.utils.json_to_sheet(
+      history.map((row) => ({
+        Date: new Date(row.created_at).toLocaleString(),
+        Staff: row.staff_name,
+        Product: row.product_name,
+        Quantity: row.quantity,
+      }))
+    )
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Withdrawal History")
+
+    const excelBuffer = XLSX.write(workbook, {
+      bookType: "xlsx",
+      type: "array",
+    })
+
+    const blob = new Blob([excelBuffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    })
+
+    saveAs(blob, "withdrawal_history.xlsx")
+  }
+
   return (
     <Box>
       <Typography variant="h4" gutterBottom>
         📜 Withdrawal History
       </Typography>
 
-      <TextField
-        select
-        label="Filter by Staff"
-        value={selectedStaff}
-        onChange={e => setSelectedStaff(e.target.value === "" ? "" : Number(e.target.value))}
-        sx={{ mb: 3, minWidth: 200 }}
-      >
-        <MenuItem value="">All Staff</MenuItem>
-        {staff.map(s => (
-          <MenuItem key={s.id} value={s.id}>{s.name}</MenuItem>
-        ))}
-      </TextField>
+      {/* Filter and Download Button */}
+      <Box display="flex" gap={2} mb={3}>
+        <TextField
+          select
+          label="Filter by Staff"
+          value={selectedStaff}
+          onChange={(e) =>
+            setSelectedStaff(e.target.value === "" ? "" : Number(e.target.value))
+          }
+          sx={{ minWidth: 200 }}
+        >
+          <MenuItem value="">All Staff</MenuItem>
+          {staff.map((s) => (
+            <MenuItem key={s.id} value={s.id}>
+              {s.name}
+            </MenuItem>
+          ))}
+        </TextField>
 
+        <Button variant="contained" color="success" onClick={downloadExcel}>
+          ⬇️ Download Excel
+        </Button>
+      </Box>
+
+      {/* Table */}
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
@@ -89,9 +132,11 @@ export default function WithdrawalHistoryPage() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {history.map(row => (
+            {history.map((row) => (
               <TableRow key={row.withdrawal_id}>
-                <TableCell>{new Date(row.created_at).toLocaleString()}</TableCell>
+                <TableCell>
+                  {new Date(row.created_at).toLocaleString()}
+                </TableCell>
                 <TableCell>{row.staff_name}</TableCell>
                 <TableCell>{row.product_name}</TableCell>
                 <TableCell>{row.quantity}</TableCell>
