@@ -14,7 +14,12 @@ import {
   TableHead,
   TableRow,
   Paper,
+  IconButton,
 } from "@mui/material"
+
+import Grid from "@mui/material/Grid";
+import AddCircleIcon from "@mui/icons-material/AddCircle"
+import RemoveCircleIcon from "@mui/icons-material/RemoveCircle"
 import { supabase } from "../assets/lib/supabaseClient"
 
 interface Staff {
@@ -45,8 +50,9 @@ export default function Home() {
 
   const [open, setOpen] = useState(false)
   const [selectedStaff, setSelectedStaff] = useState<number | null>(null)
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
-  const [quantity, setQuantity] = useState<number>(1)
+  const [items, setItems] = useState<{ productId: number | ""; quantity: number }[]>([
+    { productId: "", quantity: 1 },
+  ])
 
   // ✅ Fetch staff, products, and history
   const fetchStaff = async () => {
@@ -60,7 +66,10 @@ export default function Home() {
   }
 
   const fetchHistory = async () => {
-    const { data, error } = await supabase.from("withdrawal_history").select("*")
+    const { data, error } = await supabase
+      .from("withdrawal_history")
+      .select("*")
+      .order("created_at", { ascending: false })
     if (!error && data) setHistory(data)
   }
 
@@ -72,37 +81,28 @@ export default function Home() {
     // ✅ Real-time subscription for products
     const productChannel = supabase
       .channel("products-changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "products" },
-        () => {
-          fetchProducts()
-        }
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "products" }, () => {
+        fetchProducts()
+      })
       .subscribe()
 
-
-// ✅ Real-time subscription for withdrawals (optimized)
+    // ✅ Real-time subscription for withdrawals
     const withdrawalChannel = supabase
       .channel("withdrawals-changes")
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "withdrawals" },
         async (payload) => {
-          // Fetch the new row from the withdrawal_history view
           const { data, error } = await supabase
             .from("withdrawal_history")
             .select("*")
             .eq("withdrawal_id", payload.new.id)
-            .single()
-
-          if (!error && data) {
-            setHistory((prev) => [data, ...prev]) // prepend new row
+          if (!error && data && data.length > 0) {
+            setHistory((prev) => [...data, ...prev])
           }
         }
       )
       .subscribe()
-
 
     return () => {
       supabase.removeChannel(productChannel)
@@ -110,36 +110,78 @@ export default function Home() {
     }
   }, [])
 
-  // ✅ Handle withdrawal form submit
-      const handleWithdraw = async () => {
-        if (!selectedStaff || !selectedProduct || quantity < 1) return
+  // ✅ Handle withdraw multiple items
+  const handleWithdraw = async () => {
+    if (!selectedStaff || items.some((i) => !i.productId || i.quantity <= 0)) {
+      alert("Please fill all fields correctly")
+      return
+    }
 
-        const { error } = await supabase.from("withdrawals").insert({
-          staff_id: selectedStaff,
-          product_id: selectedProduct.id,
-          quantity,
+    try {
+      // Insert withdrawal record
+      const { data: withdrawal, error: withdrawalError } = await supabase
+        .from("withdrawals")
+        .insert([{ staff_id: selectedStaff }])
+        .select()
+        .single()
+
+      if (withdrawalError) throw withdrawalError
+
+      const withdrawalId = withdrawal.id
+
+      // Insert items
+      const withdrawalItems = items.map((i) => ({
+        withdrawal_id: withdrawalId,
+        product_id: i.productId,
+        quantity: i.quantity,
+      }))
+
+      const { error: itemsError } = await supabase
+        .from("withdrawal_items")
+        .insert(withdrawalItems)
+
+      if (itemsError) throw itemsError
+
+      // Update product stock
+      for (const i of items) {
+        await supabase.rpc("decrement_product_stock", {
+          p_product_id: i.productId,
+          p_quantity: i.quantity,
         })
-
-        if (error) {
-          console.error("Error withdrawing product:", error.message)
-          return
-        }
-
-        setOpen(false)
-        setSelectedStaff(null)
-        setSelectedProduct(null)
-        setQuantity(1)
-
-        // Reload all data
-        await fetchProducts()
-        await fetchHistory()
       }
 
+      setOpen(false)
+      setSelectedStaff(null)
+      setItems([{ productId: "", quantity: 1 }])
+      await fetchProducts()
+      await fetchHistory()
+    } catch (err) {
+      console.error("Withdrawal error:", err)
+      alert("Error processing withdrawal")
+    }
+  }
 
-  // ✅ Filter products that need restocking
-  const lowStock = products.filter(
-    (p) => p.status === "Low Stock" || p.status === "Unavailable"
-  )
+  // ✅ Manage items in form
+  const handleAddItem = () => {
+    setItems([...items, { productId: "", quantity: 1 }])
+  }
+
+  const handleRemoveItem = (index: number) => {
+    setItems(items.filter((_, i) => i !== index))
+  }
+
+  const handleChange = (
+    index: number,
+    field: "productId" | "quantity",
+    value: number | ""
+  ) => {
+    const updated = [...items]
+    updated[index] = { ...updated[index], [field]: value }
+    setItems(updated)
+  }
+
+  // ✅ Low stock filter
+  const lowStock = products.filter((p) => p.quantity <= 3)
 
   return (
     <Box>
@@ -149,7 +191,7 @@ export default function Home() {
 
       {/* Withdraw Button */}
       <Button variant="contained" color="primary" onClick={() => setOpen(true)}>
-        Withdraw Item
+        ➖ Withdraw Item
       </Button>
 
       {/* Withdraw Modal */}
@@ -159,13 +201,13 @@ export default function Home() {
             p: 4,
             bgcolor: "background.paper",
             borderRadius: 2,
-            maxWidth: 400,
+            maxWidth: 600,
             mx: "auto",
             mt: 10,
           }}
         >
           <Typography variant="h6" gutterBottom>
-            Withdraw Item
+            Withdraw Items
           </Typography>
 
           {/* Staff Dropdown */}
@@ -184,36 +226,53 @@ export default function Home() {
             ))}
           </TextField>
 
-          {/* Product Autocomplete */}
-          <Autocomplete
-            options={products}
-            getOptionLabel={(p) => `${p.name} | ${p.status}`}
-            value={selectedProduct}
-            onChange={(_, value) => setSelectedProduct(value)}
-            renderInput={(params) => (
-              <TextField {...params} label="Select Product" margin="normal" />
-            )}
-          />
+          {/* Multiple Products */}
+          {items.map((item, index) => (
+            <Grid container spacing={2} alignItems="center" key={index} sx={{ mb: 2 }}>
+              <Grid item xs={6}>
+                <Autocomplete
+                  options={products}
+                  getOptionLabel={(p) => `${p.name} | ${p.status}`}
+                  value={products.find((p) => p.id === item.productId) || null}
+                  onChange={(_, value) =>
+                    handleChange(index, "productId", value ? value.id : "")
+                  }
+                  renderInput={(params) => (
+                    <TextField {...params} label="Product" fullWidth />
+                  )}
+                />
+              </Grid>
+              <Grid item xs={4}>
+                <TextField
+                  type="number"
+                  label="Quantity"
+                  fullWidth
+                  value={item.quantity}
+                  onChange={(e) => handleChange(index, "quantity", Number(e.target.value))}
+                  inputProps={{ min: 1 }}
+                />
+              </Grid>
+              <Grid item xs={2}>
+                <IconButton
+                  color="error"
+                  onClick={() => handleRemoveItem(index)}
+                  disabled={items.length === 1}
+                >
+                  <RemoveCircleIcon />
+                </IconButton>
+              </Grid>
+            </Grid>
+          ))}
 
-          {/* Quantity */}
-          <TextField
-            fullWidth
-            type="number"
-            label="Quantity"
-            margin="normal"
-            value={quantity}
-            onChange={(e) => setQuantity(Number(e.target.value))}
-          />
-
-          <Button
-            variant="contained"
-            color="primary"
-            fullWidth
-            sx={{ mt: 2 }}
-            onClick={handleWithdraw}
-          >
-            Confirm Withdraw
+          <Button startIcon={<AddCircleIcon />} onClick={handleAddItem}>
+            Add Another Product
           </Button>
+
+          <Box mt={2}>
+            <Button variant="contained" color="primary" fullWidth onClick={handleWithdraw}>
+              Confirm Withdraw
+            </Button>
+          </Box>
         </Box>
       </Modal>
 
@@ -225,14 +284,7 @@ export default function Home() {
         {lowStock.length === 0 ? (
           <Typography>No products need restock 🎉</Typography>
         ) : (
-          <TableContainer
-            component={Paper}
-            sx={{
-              maxWidth: 500,
-              maxHeight: 320, // ~5 rows, adjust as needed
-              overflowY: "auto",
-            }}
-          >
+          <TableContainer component={Paper} sx={{ maxWidth: 500, maxHeight: 320 }}>
             <Table stickyHeader>
               <TableHead>
                 <TableRow>
@@ -242,7 +294,7 @@ export default function Home() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {lowStock.slice(0, 10000).map((p) => (
+                {lowStock.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell>{p.name}</TableCell>
                     <TableCell>{p.quantity}</TableCell>
@@ -261,8 +313,6 @@ export default function Home() {
                               : p.status === "Low Stock"
                               ? "orange"
                               : "red",
-                          textTransform: "capitalize",
-                          minWidth: 90,
                           textAlign: "center",
                         }}
                       >
@@ -282,14 +332,7 @@ export default function Home() {
         <Typography variant="h6" gutterBottom>
           📜 Withdrawal History
         </Typography>
-        <TableContainer
-          component={Paper}
-          sx={{
-            maxWidth: 700,
-            maxHeight: 320, // ~5 rows, adjust as needed
-            overflowY: "auto",
-          }}
-        >
+        <TableContainer component={Paper} sx={{ maxWidth: 700, maxHeight: 320 }}>
           <Table stickyHeader>
             <TableHead>
               <TableRow>
@@ -300,11 +343,9 @@ export default function Home() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {history.slice(0, 4).map((row) => (
-                <TableRow key={row.withdrawal_id}>
-                  <TableCell>
-                    {new Date(row.created_at).toLocaleString()}
-                  </TableCell>
+              {history.slice(0, 10).map((row) => (
+                <TableRow key={row.withdrawal_id + row.product_name}>
+                  <TableCell>{new Date(row.created_at).toLocaleString()}</TableCell>
                   <TableCell>{row.staff_name}</TableCell>
                   <TableCell>{row.product_name}</TableCell>
                   <TableCell>{row.quantity}</TableCell>
