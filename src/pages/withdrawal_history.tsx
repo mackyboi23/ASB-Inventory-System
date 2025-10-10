@@ -28,39 +28,49 @@ interface WithdrawalHistory {
   staff_name: string
   product_name: string
   quantity: number
+  staff_id?: number
 }
 
 export default function WithdrawalHistoryPage() {
   const [staff, setStaff] = useState<Staff[]>([])
   const [selectedStaff, setSelectedStaff] = useState<number | "">("")
   const [history, setHistory] = useState<WithdrawalHistory[]>([])
+  const [loading, setLoading] = useState(false)
 
+  // ✅ Fetch staff list once
   useEffect(() => {
-    // Fetch staff list
-    supabase.from("staff").select("*").then(({ data }) => {
-      if (data) setStaff(data)
-    })
+    const fetchStaff = async () => {
+      const { data, error } = await supabase.from("staff").select("*")
+      if (error) console.error("Error loading staff:", error)
+      else setStaff(data || [])
+    }
+    fetchStaff()
   }, [])
 
+  // ✅ Fetch history whenever selectedStaff changes
   useEffect(() => {
-    supabase
-      .from("withdrawal_history")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .then(({ data }) => {
-        if (data) {
-          if (selectedStaff) {
-            // Find staff name by selectedStaff id
-            const staffObj = staff.find((s) => s.id === selectedStaff)
-            setHistory(data.filter((row) => row.staff_name === staffObj?.name))
-          } else {
-            setHistory(data)
-          }
-        }
-      })
-  }, [selectedStaff, staff])
+    const fetchHistory = async () => {
+      setLoading(true)
+      let query = supabase
+        .from("withdrawal_history")
+        .select("*")
+        .order("created_at", { ascending: false })
 
-  // ✅ Download Excel function
+      // ✅ Filter by staff if selected
+      if (selectedStaff) {
+        query = query.eq("staff_id", selectedStaff)
+      }
+
+      const { data, error } = await query
+      if (error) console.error("Error loading withdrawal history:", error)
+      else setHistory(data || [])
+      setLoading(false)
+    }
+
+    fetchHistory()
+  }, [selectedStaff])
+
+  // ✅ Download Excel
   const downloadExcel = () => {
     if (history.length === 0) {
       alert("No data to export")
@@ -96,18 +106,18 @@ export default function WithdrawalHistoryPage() {
         📜 Withdrawal History
       </Typography>
 
-      {/* Filter and Download Button */}
+      {/* Filter & Download */}
       <Box display="flex" gap={2} mb={3}>
         <TextField
           select
-          label="Filter by Staff"
+          label="Filter by Technician"
           value={selectedStaff}
           onChange={(e) =>
             setSelectedStaff(e.target.value === "" ? "" : Number(e.target.value))
           }
           sx={{ minWidth: 200 }}
         >
-          <MenuItem value="">All Staff</MenuItem>
+          <MenuItem value="">All Technicians</MenuItem>
           {staff.map((s) => (
             <MenuItem key={s.id} value={s.id}>
               {s.name}
@@ -132,17 +142,24 @@ export default function WithdrawalHistoryPage() {
             </TableRow>
           </TableHead>
           <TableBody>
-            {history.map((row) => (
-              <TableRow key={row.withdrawal_id}>
-                <TableCell>
-                  {new Date(row.created_at).toLocaleString()}
+            {loading ? (
+              <TableRow>
+                <TableCell colSpan={5} align="center">
+                  Loading...
                 </TableCell>
-                <TableCell>{row.staff_name}</TableCell>
-                <TableCell>{row.product_name}</TableCell>
-                <TableCell>{row.quantity}</TableCell>
               </TableRow>
-            ))}
-            {history.length === 0 && (
+            ) : history.length > 0 ? (
+              history.map((row) => (
+                <TableRow key={row.withdrawal_id}>
+                  <TableCell>
+                    {new Date(row.created_at).toLocaleString()}
+                  </TableCell>
+                  <TableCell>{row.staff_name}</TableCell>
+                  <TableCell>{row.product_name}</TableCell>
+                  <TableCell>{row.quantity}</TableCell>
+                </TableRow>
+              ))
+            ) : (
               <TableRow>
                 <TableCell colSpan={5} align="center">
                   No withdrawals found.
