@@ -112,8 +112,23 @@ export default function Home() {
 
   // ✅ Handle withdraw multiple items
   const handleWithdraw = async () => {
+    // Validate staff & items
     if (!selectedStaff || items.some((i) => !i.productId || i.quantity <= 0)) {
       alert("Please fill all fields correctly")
+      return
+    }
+
+    // Prevent withdrawing unavailable items
+    const unavailable = items
+      .map((i) => products.find((p) => p.id === i.productId))
+      .filter(Boolean)
+      .filter((p) => p!.status === "Unavailable") as Product[]
+
+    if (unavailable.length > 0) {
+      alert(
+        `Cannot withdraw: the following product(s) are unavailable:\n` +
+          unavailable.map((p) => `• ${p.name}`).join("\n")
+      )
       return
     }
 
@@ -182,6 +197,14 @@ export default function Home() {
 
   // ✅ Low stock filter
   const lowStock = products.filter((p) => p.quantity <= 3)
+
+  // --- New: determine whether the form can submit (no unavailable items) ---
+  const canWithdraw = Boolean(selectedStaff) && items.every((i) => {
+    if (!i.productId || i.quantity <= 0) return false
+    const prod = products.find((p) => p.id === i.productId)
+    if (!prod) return false
+    return prod.status !== "Unavailable"
+  })
 
   return (
     <Box>
@@ -269,7 +292,13 @@ export default function Home() {
           </Button>
 
           <Box mt={2}>
-            <Button variant="contained" color="primary" fullWidth onClick={handleWithdraw}>
+            <Button
+              variant="contained"
+              color="primary"
+              fullWidth
+              onClick={handleWithdraw}
+              disabled={!canWithdraw}
+            >
               Confirm Withdraw
             </Button>
           </Box>
