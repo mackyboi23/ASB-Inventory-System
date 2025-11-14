@@ -30,6 +30,7 @@ import EditIcon from "@mui/icons-material/Edit"
 import AddIcon from "@mui/icons-material/Add"
 import FilterListIcon from "@mui/icons-material/FilterList"
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined"
+import GetAppIcon from "@mui/icons-material/GetApp"
 
 // --- Product type ---
 interface Product {
@@ -254,6 +255,36 @@ export default function Inventory() {
 
   const paginatedProducts = filteredProducts.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
 
+  // --- Export current inventory (CSV for Excel) ---
+  const downloadCSV = (rows: Product[]) => {
+    if (!rows || rows.length === 0) {
+      setSnackbar({ open: true, msg: "⚠️ No products to export", type: "error" })
+      return
+    }
+
+    const header = ["ID", "Name", "Quantity", "Status"]
+    const escape = (val: string | number | null | undefined) => `"${String(val ?? "").replace(/"/g, '""')}"`
+
+    const csvRows = [header.join(",")]
+    rows.forEach((r) => {
+      const status = r.status ?? getStatusFromQuantity(r.quantity)
+      csvRows.push([r.id, r.name, r.quantity, status].map(escape).join(","))
+    })
+
+    // Add BOM so Excel opens UTF-8 CSV correctly
+    const csvString = "\uFEFF" + csvRows.join("\r\n")
+    const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `inventory_${new Date().toISOString().slice(0,19).replace(/[:T]/g, "-")}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    setSnackbar({ open: true, msg: "✅ Inventory exported", type: "success" })
+  }
+  
   return (
     <Container>
       <Box display="flex" alignItems="center" gap={1} mb={2}>
@@ -280,6 +311,9 @@ export default function Inventory() {
           </Typography>
         </Box>
 
+        <Button variant="outlined" startIcon={<GetAppIcon />} onClick={() => downloadCSV(filteredProducts)}>
+          Download Excel
+        </Button>
 
         <Button variant="outlined" startIcon={<FilterListIcon />} onClick={(e) => setAnchorEl(e.currentTarget)}>
           {statusFilter === "All" ? "Filter Status" : statusFilter}
